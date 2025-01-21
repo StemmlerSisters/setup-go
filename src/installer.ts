@@ -8,6 +8,11 @@ import fs from 'fs';
 import os from 'os';
 import {StableReleaseAlias} from './utils';
 
+const MANIFEST_REPO_OWNER = 'actions';
+const MANIFEST_REPO_NAME = 'go-versions';
+const MANIFEST_REPO_BRANCH = 'main';
+const MANIFEST_URL = `https://raw.githubusercontent.com/${MANIFEST_REPO_OWNER}/${MANIFEST_REPO_NAME}/${MANIFEST_REPO_BRANCH}/versions-manifest.json`;
+
 type InstallationType = 'dist' | 'manifest';
 
 export interface IGoVersionFile {
@@ -114,9 +119,9 @@ export async function getGo(
         `Received HTTP status code ${err.httpStatusCode}.  This usually indicates the rate limit has been exceeded`
       );
     } else {
-      core.info(err.message);
+      core.info((err as Error).message);
     }
-    core.debug(err.stack);
+    core.debug((err as Error).stack ?? '');
     core.info('Falling back to download directly from Go');
   }
 
@@ -160,7 +165,7 @@ async function resolveVersionFromManifest(
     return info?.resolvedVersion;
   } catch (err) {
     core.info('Unable to resolve a version from the manifest...');
-    core.debug(err.message);
+    core.debug((err as Error).message);
   }
 }
 
@@ -274,8 +279,43 @@ export async function extractGoArchive(archivePath: string): Promise<string> {
   return extPath;
 }
 
-export async function getManifest(auth: string | undefined) {
-  return tc.getManifestFromRepo('actions', 'go-versions', auth, 'main');
+export async function getManifest(
+  auth: string | undefined
+): Promise<tc.IToolRelease[]> {
+  try {
+    return await getManifestFromRepo(auth);
+  } catch (err) {
+    core.debug('Fetching the manifest via the API failed.');
+    if (err instanceof Error) {
+      core.debug(err.message);
+    }
+  }
+  return await getManifestFromURL();
+}
+
+function getManifestFromRepo(
+  auth: string | undefined
+): Promise<tc.IToolRelease[]> {
+  core.debug(
+    `Getting manifest from ${MANIFEST_REPO_OWNER}/${MANIFEST_REPO_NAME}@${MANIFEST_REPO_BRANCH}`
+  );
+  return tc.getManifestFromRepo(
+    MANIFEST_REPO_OWNER,
+    MANIFEST_REPO_NAME,
+    auth,
+    MANIFEST_REPO_BRANCH
+  );
+}
+
+async function getManifestFromURL(): Promise<tc.IToolRelease[]> {
+  core.debug('Falling back to fetching the manifest using raw URL.');
+
+  const http: httpm.HttpClient = new httpm.HttpClient('tool-cache');
+  const response = await http.getJson<tc.IToolRelease[]>(MANIFEST_URL);
+  if (!response.result) {
+    throw new Error(`Unable to get manifest from ${MANIFEST_URL}`);
+  }
+  return response.result;
 }
 
 export async function getInfoFromManifest(
